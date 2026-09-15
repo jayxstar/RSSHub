@@ -81,6 +81,8 @@ export const twitterGot = async (
     params,
     options?: {
         allowNoAuth?: boolean;
+        method?: 'GET' | 'POST';
+        body?: Record<string, unknown>;
     }
 ) => {
     const auth = await getAuth(30);
@@ -89,7 +91,8 @@ export const twitterGot = async (
         throw new ConfigNotFoundError('No valid Twitter token found');
     }
 
-    const requestUrl = `${url}?${queryString.stringify(params)}`;
+    const method = options?.method ?? 'GET';
+    const requestUrl = method === 'GET' ? `${url}?${queryString.stringify(params)}` : url;
 
     const cookie = await token2Cookie(auth?.token);
     // if (!cookie && auth) {
@@ -148,6 +151,8 @@ export const twitterGot = async (
     // `onResponse` callback, the rate-limit and auth error handling that was
     // previously in `onResponse` is now inlined below.
     const response = await undici.fetch(requestUrl, {
+        method,
+        body: options?.body ? JSON.stringify(options.body) : undefined,
         headers: {
             authority: 'x.com',
             accept: '*/*',
@@ -244,9 +249,11 @@ export const twitterGot = async (
 };
 
 export const paginationTweets = async (endpoint: string, userId: number | undefined, variables: ApiParams, path?: string[]) => {
+    const requestVariables = { ...variables, userId };
+    const requestFeatures = gqlFeatures[endpoint];
     const params = {
-        variables: JSON.stringify({ ...variables, userId }),
-        features: JSON.stringify(gqlFeatures[endpoint]),
+        variables: JSON.stringify(requestVariables),
+        features: JSON.stringify(requestFeatures),
     };
 
     const fetchData = async () => {
@@ -260,8 +267,20 @@ export const paginationTweets = async (endpoint: string, userId: number | undefi
             });
             return data;
         }
-        const { data } = await twitterGot(baseUrl + gqlMap[endpoint], params);
-        return data;
+        const response =
+            endpoint === 'SearchTimeline'
+                ? await twitterGot(baseUrl + gqlMap[endpoint], {}, {
+                      method: 'POST',
+                      body: {
+                          variables: requestVariables,
+                          features: requestFeatures,
+                          fieldToggles: {
+                              withArticleRichContentState: false,
+                          },
+                      },
+                  })
+                : await twitterGot(baseUrl + gqlMap[endpoint], params);
+        return response.data;
     };
 
     const getInstructions = (data: any) => {
